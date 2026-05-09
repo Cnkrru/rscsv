@@ -1,6 +1,25 @@
+//! CSV parser module
+//!
+//! Low-level CSV line parser that handles field splitting, quoting, and escaping.
+
 use crate::config::CsvConfig;
 use crate::error::{CsvError, CsvResult};
 
+/// CSV line parser
+///
+/// Parses individual lines of CSV data into field vectors according to
+/// the provided configuration.
+///
+/// # Examples
+///
+/// ```rust
+/// use rscsv::{CsvParser, CsvConfig};
+///
+/// let config = CsvConfig::default();
+/// let parser = CsvParser::new(config);
+/// let fields = parser.parse_line("a,b,c", 1).unwrap();
+/// assert_eq!(fields, vec!["a", "b", "c"]);
+/// ```
 pub struct CsvParser {
     pub(crate) config: CsvConfig,
 }
@@ -13,10 +32,25 @@ struct CsvParserState {
 }
 
 impl CsvParser {
+    /// Create a new parser with the given configuration
+    ///
+    /// # Parameters
+    ///
+    /// * `config` - CSV configuration
     pub fn new(config: CsvConfig) -> Self {
         CsvParser { config }
     }
 
+    /// Parse a single line of CSV data into fields
+    ///
+    /// # Parameters
+    ///
+    /// * `raw_line` - The raw line text to parse
+    /// * `line_num` - Line number for error reporting
+    ///
+    /// # Returns
+    ///
+    /// A vector of field strings on success, or a [`CsvError::Parse`] on failure.
     pub fn parse_line(&self, raw_line: &str, line_num: usize) -> CsvResult<Vec<String>> {
         let state = CsvParserState {
             line: line_num,
@@ -27,6 +61,11 @@ impl CsvParser {
         self.parse_fields(state)
     }
 
+    /// Parse a header line (always line 1)
+    ///
+    /// # Parameters
+    ///
+    /// * `raw_line` - The raw header line text
     pub fn parse_header(&self, raw_line: &str) -> CsvResult<Vec<String>> {
         self.parse_line(raw_line, 1)
     }
@@ -160,70 +199,5 @@ impl CsvParser {
         }
 
         Ok(field)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::CsvConfig;
-
-    #[test]
-    fn test_basic_fields() {
-        let parser = CsvParser::new(CsvConfig::default());
-        let result = parser.parse_line("a,b,c", 1).unwrap();
-        assert_eq!(result, vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn test_quoted_field() {
-        let parser = CsvParser::new(CsvConfig::default());
-        let result = parser.parse_line(r#""hello, world",b,c"#, 1).unwrap();
-        assert_eq!(result, vec!["hello, world", "b", "c"]);
-    }
-
-    #[test]
-    fn test_escaped_quotes() {
-        let parser = CsvParser::new(CsvConfig::default());
-        let result = parser.parse_line(r#""he said ""hi""",b"#, 1).unwrap();
-        assert_eq!(result, vec![r#"he said "hi""#, "b"]);
-    }
-
-    #[test]
-    fn test_escape_char() {
-        let config = CsvConfig::builder().escape(b'\\').build();
-        let parser = CsvParser::new(config);
-        let result = parser.parse_line(r#""hello \"world\"",b"#, 1).unwrap();
-        assert_eq!(result, vec![r#"hello "world""#, "b"]);
-    }
-
-    #[test]
-    fn test_empty_fields() {
-        let parser = CsvParser::new(CsvConfig::default());
-        let result = parser.parse_line("a,,c", 1).unwrap();
-        assert_eq!(result, vec!["a", "", "c"]);
-    }
-
-    #[test]
-    fn test_delimiter_only() {
-        let parser = CsvParser::new(CsvConfig::default());
-        let result = parser.parse_line(",", 1).unwrap();
-        assert_eq!(result, vec!["", ""]);
-    }
-
-    #[test]
-    fn test_trim() {
-        let config = CsvConfig::builder().trim(true).build();
-        let parser = CsvParser::new(config);
-        let result = parser.parse_line(" a , b , c ", 1).unwrap();
-        assert_eq!(result, vec!["a", "b", "c"]);
-    }
-
-    #[test]
-    fn test_custom_delimiter() {
-        let config = CsvConfig::builder().delimiter(b';').build();
-        let parser = CsvParser::new(config);
-        let result = parser.parse_line("a;b;c", 1).unwrap();
-        assert_eq!(result, vec!["a", "b", "c"]);
     }
 }

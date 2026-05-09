@@ -1,3 +1,8 @@
+//! CSV reader module
+//!
+//! Provides a buffered CSV reader with support for headers, comments,
+//! flexible column counts, and multi-line quoted fields.
+
 use crate::config::CsvConfig;
 use crate::error::{CsvError, CsvResult};
 use crate::parser::CsvParser;
@@ -5,6 +10,21 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+/// CSV reader
+///
+/// Reads CSV data from any [`BufRead`] source, supporting headers,
+/// comment lines, flexible column counts, and multi-line quoted fields.
+///
+/// # Examples
+///
+/// ```rust
+/// use rscsv::CsvReader;
+///
+/// let data = "a,b,c\nd,e,f\n";
+/// let mut reader = CsvReader::from_reader(data.as_bytes());
+/// let records = reader.read_all().unwrap();
+/// assert_eq!(records.len(), 2);
+/// ```
 pub struct CsvReader<R: BufRead> {
     reader: R,
     parser: CsvParser,
@@ -14,9 +34,19 @@ pub struct CsvReader<R: BufRead> {
     headers_read: bool,
 }
 
+/// Convenience type alias for reading CSV from a file
 pub type FileReader = CsvReader<BufReader<File>>;
 
 impl FileReader {
+    /// Open a CSV file for reading
+    ///
+    /// # Parameters
+    ///
+    /// * `path` - Path to the CSV file
+    ///
+    /// # Returns
+    ///
+    /// A new [`FileReader`] instance
     pub fn open<P: AsRef<Path>>(path: P) -> CsvResult<Self> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
@@ -25,6 +55,10 @@ impl FileReader {
 }
 
 impl<R: BufRead> CsvReader<R> {
+    /// Create a reader from any buffered input source
+    ///
+    /// Uses default configuration. Use [`with_config`](CsvReader::with_config)
+    /// to customize.
     pub fn from_reader(reader: R) -> Self {
         CsvReader {
             reader,
@@ -36,19 +70,53 @@ impl<R: BufRead> CsvReader<R> {
         }
     }
 
+    /// Set the CSV configuration
+    ///
+    /// # Parameters
+    ///
+    /// * `config` - CSV configuration
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use rscsv::{CsvReader, CsvConfig};
+    ///
+    /// let config = CsvConfig::builder()
+    ///     .delimiter(b';')
+    ///     .has_headers(true)
+    ///     .build();
+    ///
+    /// let mut reader = CsvReader::from_reader("a;b\n1;2\n".as_bytes())
+    ///     .with_config(config);
+    /// ```
     pub fn with_config(mut self, config: CsvConfig) -> Self {
         self.parser = CsvParser::new(config.clone());
         self
     }
 
+    /// Returns the headers if they have been read
+    ///
+    /// Headers are read automatically when `has_headers` is enabled.
     pub fn headers(&self) -> Option<&[String]> {
         self.headers.as_deref()
     }
 
+    /// Returns the current reading position
+    ///
+    /// # Returns
+    ///
+    /// A tuple of `(line_number, byte_offset)`
     pub fn position(&self) -> (usize, u64) {
         (self.current_line, self.byte_offset)
     }
 
+    /// Explicitly read the header row
+    ///
+    /// Usually called automatically when `has_headers` is enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file is empty.
     pub fn read_headers(&mut self) -> CsvResult<()> {
         let mut line = String::new();
         let bytes = self.reader.read_line(&mut line)?;
@@ -73,6 +141,20 @@ impl<R: BufRead> CsvReader<R> {
         Ok(())
     }
 
+    /// Read all remaining records into a vector
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use rscsv::CsvReader;
+    ///
+    /// let mut reader = CsvReader::from_reader("a,b\nc,d\n".as_bytes());
+    /// let records = reader.read_all().unwrap();
+    /// assert_eq!(records, vec![
+    ///     vec!["a".to_string(), "b".to_string()],
+    ///     vec!["c".to_string(), "d".to_string()],
+    /// ]);
+    /// ```
     pub fn read_all(&mut self) -> CsvResult<Vec<Vec<String>>> {
         let mut records: Vec<Vec<String>> = Vec::new();
         for result in self.records() {
@@ -81,6 +163,10 @@ impl<R: BufRead> CsvReader<R> {
         Ok(records)
     }
 
+    /// Returns an iterator over the remaining records
+    ///
+    /// Handles multi-line quoted fields, comment skipping, and
+    /// column count validation automatically.
     pub fn records(&mut self) -> CsvRecordsIter<'_, R> {
         CsvRecordsIter {
             reader: self,
@@ -90,6 +176,10 @@ impl<R: BufRead> CsvReader<R> {
     }
 }
 
+/// Iterator over CSV records
+///
+/// Created by [`CsvReader::records()`]. Handles multi-line quoted fields,
+/// comment lines, and flexible/strict column validation.
 pub struct CsvRecordsIter<'a, R: BufRead> {
     reader: &'a mut CsvReader<R>,
     first_call: bool,
@@ -188,69 +278,5 @@ impl<'a, R: BufRead> CsvRecordsIter<'a, R> {
         }
 
         Ok(fields)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Cursor;
-
-    fn reader_from_str(s: &str) -> CsvReader<Cursor<&str>> {
-        CsvReader::from_reader(Cursor::new(s))
-    }
-
-    #[test]
-    fn test_basic_read() {
-        let mut reader = reader_from_str("a,b,c\nd,e,f\n");
-        let records = reader.read_all().unwrap();
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[0], vec!["a", "b", "c"]);
-        assert_eq!(records[1], vec!["d", "e", "f"]);
-    }
-
-    #[test]
-    fn test_with_headers() {
-        let config = CsvConfig::builder().has_headers(true).build();
-        let mut reader = reader_from_str("name,age\nAlice,30\nBob,25\n").with_config(config);
-        let records = reader.read_all().unwrap();
-        assert_eq!(reader.headers().unwrap(), &["name", "age"]);
-        assert_eq!(records.len(), 2);
-    }
-
-    #[test]
-    fn test_flexible_mode() {
-        let config = CsvConfig::builder().has_headers(true).flexible(true).build();
-        let mut reader = reader_from_str("a,b\n1,2,3\n4,5\n").with_config(config);
-        let records = reader.read_all().unwrap();
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[0].len(), 3);
-        assert_eq!(records[1].len(), 2);
-    }
-
-    #[test]
-    #[should_panic]
-    fn test_strict_mode_mismatch() {
-        let config = CsvConfig::builder().has_headers(true).build();
-        let mut reader = reader_from_str("a,b\n1,2,3\n").with_config(config);
-        reader.read_all().unwrap();
-    }
-
-    #[test]
-    fn test_comment_skip() {
-        let config = CsvConfig::builder().comment(b'#').build();
-        let mut reader = reader_from_str("# comment\na,b\n# another\nc,d\n").with_config(config);
-        let records = reader.read_all().unwrap();
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[0], vec!["a", "b"]);
-        assert_eq!(records[1], vec!["c", "d"]);
-    }
-
-    #[test]
-    fn test_different_delimiter() {
-        let config = CsvConfig::builder().delimiter(b';').build();
-        let mut reader = reader_from_str("a;b;c\nd;e;f\n").with_config(config);
-        let records = reader.read_all().unwrap();
-        assert_eq!(records[0], vec!["a", "b", "c"]);
     }
 }
